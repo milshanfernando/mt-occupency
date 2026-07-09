@@ -8,7 +8,6 @@ import {
   User,
   CalendarRange,
   ChevronDown,
-  Download,
   Tag,
 } from "lucide-react";
 
@@ -480,14 +479,6 @@ const RoomOccupancyBoard: React.FC = () => {
             <p className="text-[#c9a463] tracking-[0.14em] text-xs font-semibold uppercase mb-1">
               Live Occupancy
             </p>
-            {/* <button
-              onClick={handleDownload}
-              disabled={downloading}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold bg-[#1a1d24] border border-[#272b34] text-[#c9a463] disabled:opacity-50 shrink-0"
-            >
-              <Download size={13} />
-              {downloading ? "Preparing…" : "Download PNG"}
-            </button> */}
           </div>
 
           <div className="flex items-end justify-between gap-3 flex-wrap">
