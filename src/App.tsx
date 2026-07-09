@@ -172,14 +172,6 @@ const STATUS_THEME: Record<StatusKey, StatusTheme> = {
   },
 };
 
-const STATUS_LABEL: Record<StatusKey, string> = {
-  available: "Available",
-  occupied: "Occupied",
-  arriving: "Arriving",
-  departing: "Departing",
-  turnover: "Turnover",
-};
-
 const getStatus = (room: Room, todayISO: string): StatusKey => {
   if (!room.name) return "available";
   const arriving = room.start === todayISO;
@@ -199,14 +191,6 @@ const displayDate = (iso: string) => {
   const [, m, d] = iso.split("-");
   return `${m}/${d}`;
 };
-// longer date for the export layout, e.g. "Jul 12"
-const displayDateLong = (iso: string) => {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  return dt.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
-
 const today = new Date();
 const todayISO = toISO(today);
 const todayLong = today.toLocaleDateString(undefined, {
@@ -215,58 +199,12 @@ const todayLong = today.toLocaleDateString(undefined, {
   day: "numeric",
 });
 
-// html2canvas is loaded dynamically from a CDN; declare a minimal shape for it
-type Html2Canvas = (
-  el: HTMLElement,
-  opts?: Record<string, unknown>,
-) => Promise<HTMLCanvasElement>;
-
-declare global {
-  interface Window {
-    html2canvas?: Html2Canvas;
-  }
-}
-
-// ---------- html2canvas loader (for PNG export) ----------
-let html2canvasPromise: Promise<Html2Canvas> | null = null;
-const loadHtml2Canvas = (): Promise<Html2Canvas> => {
-  if (window.html2canvas) return Promise.resolve(window.html2canvas);
-  if (html2canvasPromise) return html2canvasPromise;
-  html2canvasPromise = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src =
-      "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
-    script.onload = () => resolve(window.html2canvas as Html2Canvas);
-    script.onerror = () => reject(new Error("Could not load export library"));
-    document.head.appendChild(script);
-  });
-  return html2canvasPromise;
-};
-
-// waits for the two Google Fonts (Fraunces + Inter) to actually be ready so
-// the exported PNG never falls back to a system font mid-capture
-const waitForFonts = async () => {
-  const anyDoc = document as Document & { fonts?: { ready: Promise<unknown> } };
-  if (anyDoc.fonts?.ready) {
-    try {
-      await anyDoc.fonts.ready;
-    } catch {
-      /* ignore */
-    }
-  }
-  // small extra buffer for slow font swap / layout settle
-  await new Promise((r) => setTimeout(r, 120));
-};
-
 const RoomOccupancyBoard: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>(() => buildDefaultRooms());
   const [flat, setFlat] = useState<string>(flats[0].key);
   const [modal, setModal] = useState<Room | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState("");
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const printRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null); // mirrors `drag` for the pointermove/up listeners
 
   // load display fonts
@@ -282,23 +220,6 @@ const RoomOccupancyBoard: React.FC = () => {
 
   const currentFlat = flats.find((f) => f.key === flat);
   const currentRooms = rooms.filter((r) => r.id.startsWith(flat + "-"));
-
-  const statusCounts = currentRooms.reduce(
-    (acc, r) => {
-      const s = getStatus(r, todayISO);
-      if (s === "available") acc.available += 1;
-      else acc.occupiedTotal += 1;
-      if (s === "arriving" || s === "turnover") acc.arriving += 1;
-      if (s === "departing" || s === "turnover") acc.departing += 1;
-      return acc;
-    },
-    { available: 0, occupiedTotal: 0, arriving: 0, departing: 0 } as {
-      available: number;
-      occupiedTotal: number;
-      arriving: number;
-      departing: number;
-    },
-  );
 
   // ---------- modal actions ----------
   const openModal = (room: Room) => setModal({ ...room });
@@ -432,54 +353,19 @@ const RoomOccupancyBoard: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- PNG export (renders the dedicated print layout, not the live board) ----------
-  const handleDownload = async () => {
-    if (!printRef.current) return;
-    setDownloading(true);
-    setDownloadError("");
-    try {
-      await waitForFonts();
-      const html2canvas = await loadHtml2Canvas();
-      const canvas = await html2canvas(printRef.current, {
-        backgroundColor: "#ffffff",
-        scale: 3,
-        useCORS: true,
-        logging: false,
-        windowWidth: printRef.current.scrollWidth,
-        windowHeight: printRef.current.scrollHeight,
-      });
-      const link = document.createElement("a");
-      const flatLabel = currentFlat?.label ?? "flat";
-      const safeLabel = flatLabel.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-      link.download = `${safeLabel}-occupancy-${todayISO}.png`;
-      link.href = canvas.toDataURL("image/png", 1.0);
-      link.click();
-    } catch (err: unknown) {
-      setDownloadError("Couldn't export image. Try again.");
-    } finally {
-      setDownloading(false);
-    }
-  };
-
   const occupiedCount = currentRooms.filter((r) => r.name).length;
   const draggedRoom = drag
     ? (rooms.find((r) => r.id === drag.id) ?? null)
     : null;
-
-  // how many print-grid columns to use depending on room count, so cards
-  // stay readable instead of shrinking to fit everything in 3 columns
-  const printColumns = currentRooms.length > 9 ? 3 : 2;
 
   return (
     <div className="bg-[#0f1115] text-[#eef0f3] min-h-screen font-['Inter',sans-serif]">
       <div>
         {/* header */}
         <div className="border-b border-[#272b34] px-4 sm:px-6 pt-5 pb-4">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-[#c9a463] tracking-[0.14em] text-xs font-semibold uppercase mb-1">
-              Live Occupancy
-            </p>
-          </div>
+          <p className="text-[#c9a463] tracking-[0.14em] text-xs font-semibold uppercase mb-1">
+            Live Occupancy
+          </p>
 
           <div className="flex items-end justify-between gap-3 flex-wrap">
             <h1 className="font-['Fraunces',serif] text-2xl sm:text-3xl font-semibold">
@@ -493,9 +379,6 @@ const RoomOccupancyBoard: React.FC = () => {
               </p>
             </div>
           </div>
-          {downloadError && (
-            <p className="text-xs text-[#c1616b] mt-1">{downloadError}</p>
-          )}
 
           {/* flat picker */}
           <div className="mt-4 relative">
@@ -864,341 +747,6 @@ const RoomOccupancyBoard: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* ---------- hidden print layout, captured for the PNG export ----------
-          Rendered off-screen at all times (not display:none) so html2canvas
-          can lay it out correctly. Purely visual, no interactivity.
-          Each card carries the FULL guest detail set: name, source, dates,
-          and a clear status badge — sized generously so nothing needs to
-          be squinted at once exported. */}
-      <div
-        style={{ position: "fixed", top: 0, left: "-10000px", width: "860px" }}
-      >
-        <div
-          ref={printRef}
-          style={{
-            width: "860px",
-            background: "#ffffff",
-            padding: "40px",
-            fontFamily: "'Inter', sans-serif",
-            color: "#1c2027",
-          }}
-        >
-          {/* header */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-end",
-              justifyContent: "space-between",
-              marginBottom: "6px",
-            }}
-          >
-            <div>
-              <p
-                style={{
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
-                  color: "#b3872a",
-                  margin: "0 0 4px",
-                }}
-              >
-                Live Occupancy
-              </p>
-              <h1
-                style={{
-                  fontFamily: "'Fraunces', serif",
-                  fontWeight: 600,
-                  fontSize: "32px",
-                  margin: 0,
-                  color: "#1c2027",
-                  lineHeight: 1.1,
-                }}
-              >
-                {currentFlat?.label}
-              </h1>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <p
-                style={{
-                  fontSize: "15px",
-                  fontWeight: 600,
-                  margin: "0 0 2px",
-                  color: "#1c2027",
-                }}
-              >
-                {todayLong}
-              </p>
-              <p style={{ fontSize: "12px", color: "#868b99", margin: 0 }}>
-                {occupiedCount} occupied · {currentRooms.length - occupiedCount}{" "}
-                available
-              </p>
-            </div>
-          </div>
-
-          <div
-            style={{
-              height: "2px",
-              background:
-                "linear-gradient(90deg, #c9a463 0%, #e4e6ea 40%, #e4e6ea 100%)",
-              margin: "16px 0 20px",
-            }}
-          />
-
-          {/* summary strip */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "center",
-              gap: "28px",
-              marginBottom: "24px",
-              flexWrap: "wrap",
-            }}
-          >
-            {[
-              ["Departing", statusCounts.departing, STATUS_THEME.departing],
-              ["Arriving", statusCounts.arriving, STATUS_THEME.arriving],
-              ["Available", statusCounts.available, STATUS_THEME.available],
-              ["Occupied", statusCounts.occupiedTotal, STATUS_THEME.occupied],
-            ].map(([label, count, theme]) => {
-              const t = theme as StatusTheme;
-              return (
-                <div
-                  key={label as string}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "8px",
-                    background: t.bg,
-                    border: `1px solid ${t.border}`,
-                    borderRadius: "999px",
-                    padding: "6px 14px",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "16px",
-                      fontWeight: 800,
-                      color: t.badge,
-                    }}
-                  >
-                    {pad(count as number)}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      fontWeight: 600,
-                      color: t.muted,
-                    }}
-                  >
-                    {label as string}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* room cards — full guest detail */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${printColumns}, 1fr)`,
-              gap: "14px",
-            }}
-          >
-            {currentRooms.map((room) => {
-              const status = getStatus(room, todayISO);
-              const theme = STATUS_THEME[status];
-              const occupied = !!room.name;
-              const src = sourceInfo(room.source);
-              const highlighted =
-                status === "arriving" ||
-                status === "departing" ||
-                status === "turnover";
-
-              return (
-                <div
-                  key={room.id}
-                  style={{
-                    position: "relative",
-                    background: theme.bg,
-                    border: `1.5px solid ${theme.border}`,
-                    borderRadius: "14px",
-                    padding: "16px 18px",
-                    minHeight: "104px",
-                    display: "flex",
-                    flexDirection: "column",
-                    justifyContent: "space-between",
-                    gap: "10px",
-                  }}
-                >
-                  {highlighted && (
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: "-11px",
-                        right: "14px",
-                        background: theme.badge,
-                        color: "#ffffff",
-                        fontSize: "10px",
-                        fontWeight: 700,
-                        letterSpacing: "0.02em",
-                        borderRadius: "999px",
-                        padding: "4px 10px",
-                      }}
-                    >
-                      {STATUS_LABEL[status]} today
-                    </span>
-                  )}
-
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      justifyContent: "space-between",
-                      gap: "8px",
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <p
-                        style={{
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          letterSpacing: "0.06em",
-                          textTransform: "uppercase",
-                          color: theme.muted,
-                          margin: "0 0 3px",
-                        }}
-                      >
-                        Room {room.room}
-                      </p>
-                      <p
-                        style={{
-                          fontSize: "17px",
-                          fontWeight: 700,
-                          color: theme.text,
-                          margin: 0,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {occupied ? room.name : "Available"}
-                      </p>
-                    </div>
-                    {occupied && src && (
-                      <span
-                        style={{
-                          flexShrink: 0,
-                          background: src.color,
-                          color: "#ffffff",
-                          fontSize: "10px",
-                          fontWeight: 700,
-                          borderRadius: "6px",
-                          padding: "3px 7px",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {src.code}
-                      </span>
-                    )}
-                  </div>
-
-                  {occupied ? (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        fontSize: "13px",
-                        fontWeight: 600,
-                      }}
-                    >
-                      <span
-                        style={{
-                          color:
-                            status === "arriving" || status === "turnover"
-                              ? theme.badge
-                              : theme.text,
-                        }}
-                      >
-                        {displayDateLong(room.start)}
-                      </span>
-                      <span style={{ color: theme.muted }}>→</span>
-                      <span
-                        style={{
-                          color:
-                            status === "departing" || status === "turnover"
-                              ? theme.badge
-                              : theme.text,
-                        }}
-                      >
-                        {displayDateLong(room.end)}
-                      </span>
-                    </div>
-                  ) : (
-                    <p
-                      style={{
-                        fontSize: "12px",
-                        color: theme.muted,
-                        margin: 0,
-                      }}
-                    >
-                      No guest assigned
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* source legend */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "14px",
-              marginTop: "26px",
-              paddingTop: "16px",
-              borderTop: "1px solid #e4e6ea",
-            }}
-          >
-            <span
-              style={{ fontSize: "11px", fontWeight: 700, color: "#868b99" }}
-            >
-              SOURCE
-            </span>
-            {SOURCES.map((s) => (
-              <span
-                key={s.code}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  fontSize: "11px",
-                  color: "#6b7280",
-                }}
-              >
-                <span
-                  style={{
-                    background: s.color,
-                    color: "#ffffff",
-                    fontSize: "10px",
-                    fontWeight: 700,
-                    borderRadius: "5px",
-                    padding: "2px 6px",
-                  }}
-                >
-                  {s.code}
-                </span>
-                {s.label}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
