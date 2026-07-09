@@ -1,0 +1,9 @@
+<svg width="220" height="220" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg">
+  <rect width="220" height="220" rx="20" fill="#111827"/>
+  <text x="110" y="120" text-anchor="middle"
+        font-size="92" font-family="Georgia, serif"
+        font-weight="700" fill="#D4AF37">M</text>
+  <text x="110" y="165" text-anchor="middle"
+        font-size="16" font-family="Arial, sans-serif"
+        letter-spacing="4" fill="#FFFFFF">MAJESTIC TOWN</text>
+</svg>
