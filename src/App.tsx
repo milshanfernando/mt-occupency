@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import {
   GripVertical,
   LogIn,
@@ -6,12 +6,11 @@ import {
   X,
   Trash2,
   User,
-  CalendarRange,
   ChevronDown,
   Tag,
 } from "lucide-react";
 
-// ---------- flats & rooms (your real property/room map) ----------
+// ---------- flats & rooms ----------
 interface Flat {
   key: string;
   label: string;
@@ -55,18 +54,19 @@ interface DragState {
   offsetX: number;
   offsetY: number;
   w: number;
+  h: number;
   overId: string | null;
 }
 
 const flats: Flat[] = [
   {
     key: "superior-302",
-    label: "Superior - 302",
+    label: "Superior — 302",
     rooms: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
   },
   {
     key: "superior-301",
-    label: "Superior - 301",
+    label: "Superior — 301",
     rooms: ["10", "11", "12", "14", "15", "16", "17", "18", "19"],
   },
   {
@@ -76,12 +76,12 @@ const flats: Flat[] = [
   },
   {
     key: "vogue-m2",
-    label: "Vouge Inn - M2",
+    label: "Vouge Inn — M2",
     rooms: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"],
   },
   {
     key: "vogue-m3",
-    label: "Vouge Inn - M3",
+    label: "Vouge Inn — M3",
     rooms: [
       "12",
       "14",
@@ -99,19 +99,18 @@ const flats: Flat[] = [
   },
   {
     key: "dsv-m",
-    label: "DSV - M",
+    label: "DSV — M",
     rooms: ["1", "2", "3", "4", "5", "6", "7", "8"],
   },
-  { key: "dsv-101", label: "DSV - 101", rooms: ["1", "2", "3", "4"] },
+  { key: "dsv-101", label: "DSV — 101", rooms: ["1", "2", "3", "4"] },
 ];
 
-// ---------- booking sources ----------
 const SOURCES: Source[] = [
-  { code: "B", label: "Booking.com", color: "#3d7dd8" },
-  { code: "A", label: "Agoda", color: "#e0507a" },
-  { code: "ABB", label: "Airbnb", color: "#35b0a3" },
-  { code: "Exp", label: "Expedia", color: "#f2c14e" },
-  { code: "D", label: "Walk-in", color: "#9098ab" },
+  { code: "B", label: "Booking.com", color: "#4e83d6" },
+  { code: "A", label: "Agoda", color: "#d5688f" },
+  { code: "ABB", label: "Airbnb", color: "#3fada0" },
+  { code: "Exp", label: "Expedia", color: "#d3ab4e" },
+  { code: "D", label: "Walk-in", color: "#8891a1" },
 ];
 const sourceInfo = (code: string): Source | null =>
   SOURCES.find((s) => s.code === code) || null;
@@ -128,12 +127,78 @@ const buildDefaultRooms = (): Room[] =>
     })),
   );
 
+// seed a few rooms so the board isn't empty on first load
+const seedRooms = (
+  rooms: Room[],
+  todayISO: string,
+  plusDays: (n: number) => string,
+): Room[] => {
+  const map: Record<string, Partial<Room>> = {
+    "vogue-m2-1": {
+      name: "Kader Kone",
+      start: todayISO,
+      end: plusDays(7),
+      source: "ABB",
+    },
+    "vogue-m2-2": {
+      name: "Donald Ward",
+      start: plusDays(-5),
+      end: plusDays(5),
+      source: "B",
+    },
+    "vogue-m2-3": {
+      name: "Aya Samir",
+      start: plusDays(-3),
+      end: todayISO,
+      source: "B",
+    },
+    "vogue-m2-4": {
+      name: "Loveriya",
+      start: plusDays(-5),
+      end: plusDays(5),
+      source: "B",
+    },
+    "vogue-m2-5": {
+      name: "Rajae Lotfi",
+      start: plusDays(-2),
+      end: plusDays(2),
+      source: "B",
+    },
+    "vogue-m2-6": {
+      name: "Johnquil Peralta",
+      start: plusDays(-2),
+      end: plusDays(2),
+      source: "B",
+    },
+    "vogue-m2-7": {
+      name: "Abu Yousuf",
+      start: todayISO,
+      end: todayISO,
+      source: "D",
+    },
+    "vogue-m2-9": {
+      name: "Arun Fournas",
+      start: plusDays(-1),
+      end: plusDays(1),
+      source: "B",
+    },
+    "vogue-m2-10": {
+      name: "Muhammed Arsalan",
+      start: todayISO,
+      end: plusDays(7),
+      source: "B",
+    },
+    "vogue-m2-11": {
+      name: "Natnael Fitsum",
+      start: plusDays(-3),
+      end: plusDays(3),
+      source: "D",
+    },
+  };
+  return rooms.map((r) => (map[r.id] ? { ...r, ...map[r.id] } : r));
+};
+
 // ---------- status theming ----------
-// occupied (plain)  -> white
-// available          -> light green
-// arriving today      -> light blue
-// departing today     -> light red
-// turnover today      -> light amber/gold (arrival + departure same day)
 const STATUS_THEME: Record<StatusKey, StatusTheme> = {
   available: {
     bg: "#e3f7e9",
@@ -189,25 +254,53 @@ const toISO = (d: Date) =>
 const displayDate = (iso: string) => {
   if (!iso) return "—";
   const [, m, d] = iso.split("-");
-  return `${m}/${d}`;
+  return `${d}/${m}`;
 };
 const today = new Date();
 const todayISO = toISO(today);
-const todayLong = today.toLocaleDateString(undefined, {
-  weekday: "long",
-  month: "short",
-  day: "numeric",
-});
+const plusDays = (n: number): string => {
+  const d = new Date(today);
+  d.setDate(d.getDate() + n);
+  return toISO(d);
+};
 
-const RoomOccupancyBoard: React.FC = () => {
-  const [rooms, setRooms] = useState<Room[]>(() => buildDefaultRooms());
-  const [flat, setFlat] = useState<string>(flats[0].key);
+// finds the column count that lets every card fit on screen with no
+// scrolling, keeping cards as large and as close to square as possible
+const bestColumnCount = (
+  count: number,
+  width: number,
+  height: number,
+): number => {
+  if (count <= 0 || width <= 0 || height <= 0) return 1;
+  let best = 1;
+  let bestScore = -Infinity;
+  for (let c = 1; c <= count; c++) {
+    const rows = Math.ceil(count / c);
+    const cellW = width / c;
+    const cellH = height / rows;
+    const aspect = cellW / cellH;
+    if (aspect < 0.42 || aspect > 2.3) continue;
+    const score = Math.min(cellW, cellH);
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  return best;
+};
+
+const OccupancyBoardPro: React.FC = () => {
+  const [rooms, setRooms] = useState<Room[]>(() =>
+    seedRooms(buildDefaultRooms(), todayISO, plusDays),
+  );
+  const [flat, setFlat] = useState<string>("vogue-m2");
   const [modal, setModal] = useState<Room | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [cols, setCols] = useState(3);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const dragRef = useRef<DragState | null>(null); // mirrors `drag` for the pointermove/up listeners
+  const dragRef = useRef<DragState | null>(null);
+  const gridWrapRef = useRef<HTMLDivElement>(null);
 
-  // load display fonts
   useEffect(() => {
     if (document.getElementById("occ-board-fonts")) return;
     const link = document.createElement("link");
@@ -220,6 +313,20 @@ const RoomOccupancyBoard: React.FC = () => {
 
   const currentFlat = flats.find((f) => f.key === flat);
   const currentRooms = rooms.filter((r) => r.id.startsWith(flat + "-"));
+
+  // recompute grid columns whenever the container resizes or room count changes
+  useLayoutEffect(() => {
+    const el = gridWrapRef.current;
+    if (!el) return;
+    const compute = () => {
+      const rect = el.getBoundingClientRect();
+      setCols(bestColumnCount(currentRooms.length, rect.width, rect.height));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [currentRooms.length]);
 
   // ---------- modal actions ----------
   const openModal = (room: Room) => setModal({ ...room });
@@ -317,7 +424,6 @@ const RoomOccupancyBoard: React.FC = () => {
     setDrag(null);
     if (finished && finished.overId) swapRooms(finished.id, finished.overId);
   };
-
   const onPointerUp = () => endDrag();
 
   const onHandlePointerDown = (e: React.PointerEvent, room: Room) => {
@@ -333,6 +439,7 @@ const RoomOccupancyBoard: React.FC = () => {
       offsetX: e.clientX - rect.left,
       offsetY: e.clientY - rect.top,
       w: rect.width,
+      h: rect.height,
       overId: null,
     };
     dragRef.current = state;
@@ -343,7 +450,6 @@ const RoomOccupancyBoard: React.FC = () => {
     window.addEventListener("pointercancel", onPointerUp);
   };
 
-  // clean up listeners if the component unmounts mid-drag
   useEffect(() => {
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
@@ -357,39 +463,72 @@ const RoomOccupancyBoard: React.FC = () => {
   const draggedRoom = drag
     ? (rooms.find((r) => r.id === drag.id) ?? null)
     : null;
+  const rows = Math.ceil(currentRooms.length / cols) || 1;
+
+  const statusLegend: [StatusKey, string][] = [
+    ["available", "Available"],
+    ["occupied", "Occupied"],
+    ["arriving", "Arriving"],
+    ["departing", "Departing"],
+    ["turnover", "Turnover"],
+  ];
 
   return (
-    <div className="bg-[#0f1115] text-[#eef0f3] min-h-screen font-['Inter',sans-serif]">
-      <div>
-        {/* header */}
-        <div className="border-b border-[#272b34] px-4 sm:px-6 pt-5 pb-4">
-          <p className="text-[#c9a463] tracking-[0.14em] text-xs font-semibold uppercase mb-1">
+    <div
+      className="flex flex-col overflow-hidden"
+      style={{
+        height: "100dvh",
+        width: "100%",
+        background: "#f6ece7",
+        color: "#241d1a",
+        fontFamily: "'Inter',sans-serif",
+      }}
+    >
+      {/* header — fixed, compact but carries the full luxury identity */}
+      <div
+        className="shrink-0 border-b px-3 pt-2.5 pb-2"
+        style={{ borderColor: "#ece1dc" }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <p
+            className="text-[9px] font-semibold uppercase tracking-[0.16em]"
+            style={{ color: "#b8863a" }}
+          >
             Live Occupancy
           </p>
+          <p className="text-[10px]" style={{ color: "#8a7a72" }}>
+            {occupiedCount} occupied · {currentRooms.length - occupiedCount}{" "}
+            available
+          </p>
+        </div>
 
-          <div className="flex items-end justify-between gap-3 flex-wrap">
-            <h1 className="font-['Fraunces',serif] text-2xl sm:text-3xl font-semibold">
-              {currentFlat?.label}
-            </h1>
-            <div className="text-right">
-              <p className="text-sm font-medium">{todayLong}</p>
-              <p className="text-[#868b99] text-xs">
-                {occupiedCount} occupied · {currentRooms.length - occupiedCount}{" "}
-                available
-              </p>
-            </div>
-          </div>
+        <div className="mt-1 flex items-center gap-2">
+          <h1
+            className="font-semibold truncate"
+            style={{
+              fontFamily: "'Fraunces',serif",
+              fontSize: "clamp(15px,4.4vw,20px)",
+              color: "#20242f",
+            }}
+          >
+            {currentFlat?.label}
+          </h1>
+          <span
+            className="ml-auto text-[11px] font-semibold shrink-0"
+            style={{ color: "#b8863a" }}
+          >
+            {today.getFullYear()}/{pad(today.getMonth() + 1)}/
+            {pad(today.getDate())}
+          </span>
+        </div>
 
-          {/* flat picker */}
-          <div className="mt-4 relative">
-            <label className="sr-only" htmlFor="flat-picker">
-              Select property
-            </label>
+        <div className="mt-1.5 flex items-center gap-2">
+          <div className="relative flex-1 min-w-0">
             <select
-              id="flat-picker"
               value={flat}
               onChange={(e) => setFlat(e.target.value)}
-              className="w-full appearance-none rounded-xl px-4 py-3 pr-10 text-sm font-semibold bg-[#1a1d24] border border-[#333844] text-[#eef0f3] focus:outline-none focus:border-[#c9a463]"
+              className="w-full appearance-none rounded-lg pl-2.5 pr-7 py-1.5 text-[11px] font-semibold bg-white border focus:outline-none truncate"
+              style={{ borderColor: "#e4d4cf", color: "#20242f" }}
             >
               {flats.map((f) => {
                 const flatRooms = rooms.filter((r) =>
@@ -398,45 +537,49 @@ const RoomOccupancyBoard: React.FC = () => {
                 const occ = flatRooms.filter((r) => r.name).length;
                 return (
                   <option key={f.key} value={f.key}>
-                    {f.label} — {occ}/{flatRooms.length} occupied
+                    {f.label} — {occ}/{flatRooms.length}
                   </option>
                 );
               })}
             </select>
             <ChevronDown
-              size={16}
-              className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[#c9a463]"
+              size={12}
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2"
+              style={{ color: "#b8863a" }}
             />
-          </div>
-
-          {/* status legend */}
-          <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5">
-            {[
-              ["available", "Available"],
-              ["occupied", "Occupied"],
-              ["arriving", "Arriving today"],
-              ["departing", "Departing today"],
-              ["turnover", "Turnover today"],
-            ].map(([key, label]) => (
-              <span
-                key={key}
-                className="flex items-center gap-1.5 text-[11px] text-[#868b99]"
-              >
-                <span
-                  className="inline-block w-2.5 h-2.5 rounded-sm"
-                  style={{
-                    background: STATUS_THEME[key as StatusKey].bg,
-                    border: `1px solid ${STATUS_THEME[key as StatusKey].border}`,
-                  }}
-                />
-                {label}
-              </span>
-            ))}
           </div>
         </div>
 
-        {/* grid — auto-rows-fr keeps every card the same height regardless of content */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-4 sm:p-6 auto-rows-fr">
+        <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1">
+          {statusLegend.map(([key, label]) => (
+            <span
+              key={key}
+              className="flex items-center gap-1"
+              style={{ fontSize: "8.5px", color: "#8a7a72" }}
+            >
+              <span
+                className="inline-block rounded-sm"
+                style={{
+                  width: 6,
+                  height: 6,
+                  background: STATUS_THEME[key].badge,
+                }}
+              />
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* room grid — fills remaining space; columns computed so nothing scrolls */}
+      <div ref={gridWrapRef} className="flex-1 min-h-0 px-2.5 py-2">
+        <div
+          className="h-full grid gap-1.5"
+          style={{
+            gridTemplateColumns: `repeat(${cols}, 1fr)`,
+            gridTemplateRows: `repeat(${rows}, 1fr)`,
+          }}
+        >
           {currentRooms.map((room) => {
             const status = getStatus(room, todayISO);
             const theme = STATUS_THEME[status];
@@ -444,7 +587,7 @@ const RoomOccupancyBoard: React.FC = () => {
             const isOver = drag?.overId === room.id;
             const occupied = !!room.name;
             const src = sourceInfo(room.source);
-            const highlighted =
+            const flagged =
               status === "arriving" ||
               status === "departing" ||
               status === "turnover";
@@ -459,154 +602,166 @@ const RoomOccupancyBoard: React.FC = () => {
                 onClick={() => !drag && openModal(room)}
                 style={{
                   background: theme.bg,
-                  borderColor: isOver ? "#4c86c7" : theme.border,
+                  borderColor: isOver ? "#b8863a" : theme.border,
                   touchAction: "none",
                 }}
-                className={`relative h-full rounded-xl p-4 flex flex-col justify-between gap-3 cursor-pointer border
-                  ${isOver ? "ring-2 ring-[#4c86c7]" : ""}
-                  ${isDragging ? "opacity-35" : "opacity-100"}`}
+                className={`relative min-w-0 min-h-0 rounded-lg border flex flex-col justify-between px-1.5 py-1 cursor-pointer
+                  ${isOver ? "ring-1 ring-[#b8863a]" : ""}
+                  ${isDragging ? "opacity-30" : "opacity-100"}`}
               >
-                {highlighted && (
-                  <div
-                    className="absolute -top-3 right-3 flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-white"
-                    style={{ background: theme.badge }}
+                <div className="flex items-center justify-between w-full">
+                  <span
+                    className="font-bold uppercase truncate"
+                    style={{
+                      fontSize: "clamp(6.5px,2.1vw,9px)",
+                      color: theme.muted,
+                      letterSpacing: "0.02em",
+                    }}
                   >
-                    {status === "turnover" ? (
-                      <>
-                        <LogOut size={12} />
-                        <LogIn size={12} />
-                        Turnover today
-                      </>
-                    ) : status === "arriving" ? (
-                      <>
-                        <LogIn size={12} /> Arriving today
-                      </>
-                    ) : (
-                      <>
-                        <LogOut size={12} /> Departing today
-                      </>
-                    )}
-                  </div>
-                )}
-
-                <div className="flex items-start justify-between">
-                  <div>
-                    <p
-                      className="text-xs font-semibold uppercase tracking-wide"
-                      style={{ color: theme.muted }}
-                    >
-                      Room {room.room}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <p
-                        className="text-sm font-semibold"
-                        style={{ color: theme.text }}
+                    Rm {room.room}
+                  </span>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    {flagged && (
+                      <span
+                        className="flex items-center justify-center rounded-full"
+                        style={{
+                          width: "clamp(10px,3.4vw,14px)",
+                          height: "clamp(10px,3.4vw,14px)",
+                          background: theme.badge,
+                        }}
                       >
-                        {occupied ? (
-                          room.name
+                        {status === "turnover" ? (
+                          <LogOut size={8} color="#0f1115" />
+                        ) : status === "arriving" ? (
+                          <LogIn size={8} color="#0f1115" />
                         ) : (
-                          <span style={{ color: theme.muted }}>Available</span>
+                          <LogOut size={8} color="#0f1115" />
                         )}
-                      </p>
-                      {occupied && src && (
-                        <span
-                          title={src.label}
-                          className="text-[10px] font-bold leading-none rounded px-1.5 py-1 text-white"
-                          style={{ background: src.color }}
-                        >
-                          {src.code}
-                        </span>
-                      )}
-                    </div>
+                      </span>
+                    )}
+                    <button
+                      onPointerDown={(e) => onHandlePointerDown(e, room)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ touchAction: "none", color: theme.muted }}
+                      className="rounded hover:opacity-70"
+                      aria-label="Drag to reassign"
+                    >
+                      <GripVertical size={10} />
+                    </button>
                   </div>
-                  <button
-                    onPointerDown={(e) => onHandlePointerDown(e, room)}
-                    onClick={(e) => e.stopPropagation()}
-                    style={{ touchAction: "none", color: theme.muted }}
-                    className="p-1 -mr-1 -mt-1 rounded hover:opacity-70"
-                    aria-label="Drag to reassign"
-                  >
-                    <GripVertical size={16} />
-                  </button>
                 </div>
 
+                <p
+                  className="font-semibold truncate w-full"
+                  style={{
+                    fontSize: "clamp(7.5px,2.6vw,11.5px)",
+                    color: theme.text,
+                    lineHeight: 1.15,
+                  }}
+                >
+                  {occupied ? (
+                    room.name
+                  ) : (
+                    <span style={{ color: theme.muted }}>Available</span>
+                  )}
+                </p>
+
                 {occupied ? (
-                  <div
-                    className="flex items-center gap-2 text-xs"
-                    style={{ color: theme.muted }}
-                  >
-                    <CalendarRange size={13} />
+                  <div className="flex items-center justify-between w-full">
                     <span
                       className="font-semibold"
                       style={{
-                        color:
-                          status === "arriving" || status === "turnover"
-                            ? theme.badge
-                            : theme.text,
+                        fontSize: "clamp(6.5px,2.1vw,9px)",
+                        color: theme.muted,
                       }}
                     >
-                      {displayDate(room.start)}
+                      {displayDate(room.start)}→{displayDate(room.end)}
                     </span>
-                    <span>→</span>
-                    <span
-                      className="font-semibold"
-                      style={{
-                        color:
-                          status === "departing" || status === "turnover"
-                            ? theme.badge
-                            : theme.text,
-                      }}
-                    >
-                      {displayDate(room.end)}
-                    </span>
+                    {src && (
+                      <span
+                        title={src.label}
+                        className="font-bold text-white rounded leading-none shrink-0"
+                        style={{
+                          fontSize: "clamp(5.5px,1.8vw,8px)",
+                          padding: "1.5px 3px",
+                          background: src.color,
+                        }}
+                      >
+                        {src.code}
+                      </span>
+                    )}
                   </div>
                 ) : (
-                  <p className="text-xs" style={{ color: theme.muted }}>
-                    Tap to assign a guest
-                  </p>
+                  <span
+                    style={{
+                      fontSize: "clamp(6.5px,2.1vw,9px)",
+                      color: theme.muted,
+                    }}
+                  >
+                    Tap to assign
+                  </span>
                 )}
               </div>
             );
           })}
         </div>
+      </div>
 
-        {/* source legend */}
-        <div className="px-4 sm:px-6 pb-6 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="flex items-center gap-1 text-[11px] text-[#868b99]">
-            <Tag size={12} /> Source:
-          </span>
-          {SOURCES.map((s) => (
+      {/* source legend — fixed, slim */}
+      <div
+        className="shrink-0 border-t px-3 py-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5"
+        style={{ borderColor: "#ece1dc" }}
+      >
+        <span
+          className="flex items-center gap-0.5"
+          style={{ fontSize: "8.5px", color: "#8a7a72" }}
+        >
+          <Tag size={9} /> Source:
+        </span>
+        {SOURCES.map((s) => (
+          <span
+            key={s.code}
+            className="flex items-center gap-0.5"
+            style={{ fontSize: "8.5px", color: "#8a7a72" }}
+          >
             <span
-              key={s.code}
-              className="flex items-center gap-1.5 text-[11px] text-[#868b99]"
+              className="rounded text-center font-bold text-white leading-none"
+              style={{
+                fontSize: "7.5px",
+                padding: "1px 3px",
+                background: s.color,
+              }}
             >
-              <span
-                className="w-6 text-center rounded text-[10px] font-bold text-white leading-none py-0.5"
-                style={{ background: s.color }}
-              >
-                {s.code}
-              </span>
-              {s.label}
+              {s.code}
             </span>
-          ))}
-        </div>
+            {s.label}
+          </span>
+        ))}
       </div>
 
       {/* drag ghost */}
       {drag && draggedRoom && (
         <div
-          className="fixed rounded-xl p-4 pointer-events-none z-50 flex flex-col gap-1 bg-[#1a1d24] border border-[#c9a463] shadow-2xl"
+          className="fixed rounded-lg p-2 pointer-events-none z-50 flex flex-col gap-0.5 bg-white border shadow-2xl"
           style={{
             left: drag.x - drag.offsetX,
             top: drag.y - drag.offsetY,
             width: drag.w,
+            height: drag.h,
             opacity: 0.95,
+            borderColor: "#b8863a",
           }}
         >
-          <p className="text-[#868b99] text-xs font-semibold uppercase">
+          <p
+            className="text-[9px] font-bold uppercase"
+            style={{ color: "#8a7a72" }}
+          >
             Room {draggedRoom.room}
           </p>
-          <p className="text-sm font-semibold">
+          <p
+            className="text-[11px] font-semibold truncate"
+            style={{ color: "#20242f" }}
+          >
             {draggedRoom.name || "Available"}
           </p>
         </div>
@@ -615,25 +770,36 @@ const RoomOccupancyBoard: React.FC = () => {
       {/* modal */}
       {modal && (
         <div
-          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-black/55"
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/60"
           onClick={closeModal}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-5 flex flex-col gap-4 bg-[#1a1d24] border border-[#272b34]"
+            className="w-full rounded-t-2xl p-5 flex flex-col gap-4 bg-white border-t"
+            style={{
+              borderColor: "#e4d4cf",
+              maxHeight: "88dvh",
+              overflowY: "auto",
+            }}
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[#c9a463] text-xs font-semibold uppercase tracking-wide">
+                <p
+                  className="text-xs font-semibold uppercase tracking-wide"
+                  style={{ color: "#b8863a" }}
+                >
                   Room {modal.room}
                 </p>
-                <h2 className="font-['Fraunces',serif] text-lg font-semibold">
+                <h2
+                  className="text-lg font-semibold"
+                  style={{ fontFamily: "'Fraunces',serif" }}
+                >
                   {modal.name ? "Edit guest" : "Assign guest"}
                 </h2>
               </div>
               <button
                 onClick={closeModal}
-                className="text-[#868b99]"
+                className="text-[#8a7a72]"
                 aria-label="Close"
               >
                 <X size={20} />
@@ -641,20 +807,20 @@ const RoomOccupancyBoard: React.FC = () => {
             </div>
 
             <label className="flex flex-col gap-1 text-sm">
-              <span className="text-[#868b99] text-xs font-medium flex items-center gap-1">
+              <span className="text-[#8a7a72] text-xs font-medium flex items-center gap-1">
                 <User size={12} /> Guest name
               </span>
               <input
                 value={modal.name}
                 onChange={(e) => setModal({ ...modal, name: e.target.value })}
                 placeholder="Full name"
-                className="rounded-lg px-3 py-2 text-sm outline-none bg-[#0f1115] border border-[#272b34] text-[#eef0f3]"
+                className="rounded-lg px-3 py-2 text-sm outline-none bg-[#faf6f3] border border-[#e4d4cf] text-[#20242f]"
               />
             </label>
 
             <div className="flex gap-3">
               <label className="flex flex-col gap-1 text-sm flex-1">
-                <span className="text-[#868b99] text-xs font-medium">
+                <span className="text-[#8a7a72] text-xs font-medium">
                   Check-in
                 </span>
                 <input
@@ -663,18 +829,18 @@ const RoomOccupancyBoard: React.FC = () => {
                   onChange={(e) =>
                     setModal({ ...modal, start: e.target.value })
                   }
-                  className="rounded-lg px-3 py-2 text-sm outline-none bg-[#0f1115] border border-[#272b34] text-[#eef0f3]"
+                  className="rounded-lg px-3 py-2 text-sm outline-none bg-[#faf6f3] border border-[#e4d4cf] text-[#20242f]"
                 />
               </label>
               <label className="flex flex-col gap-1 text-sm flex-1">
-                <span className="text-[#868b99] text-xs font-medium">
+                <span className="text-[#8a7a72] text-xs font-medium">
                   Check-out
                 </span>
                 <input
                   type="date"
                   value={modal.end}
                   onChange={(e) => setModal({ ...modal, end: e.target.value })}
-                  className="rounded-lg px-3 py-2 text-sm outline-none bg-[#0f1115] border border-[#272b34] text-[#eef0f3]"
+                  className="rounded-lg px-3 py-2 text-sm outline-none bg-[#faf6f3] border border-[#e4d4cf] text-[#20242f]"
                 />
               </label>
             </div>
@@ -686,7 +852,7 @@ const RoomOccupancyBoard: React.FC = () => {
             )}
 
             <div className="flex flex-col gap-1.5 text-sm">
-              <span className="text-[#868b99] text-xs font-medium flex items-center gap-1">
+              <span className="text-[#8a7a72] text-xs font-medium flex items-center gap-1">
                 <Tag size={12} /> Booking source
               </span>
               <div className="flex flex-wrap gap-1.5">
@@ -704,9 +870,9 @@ const RoomOccupancyBoard: React.FC = () => {
                           ? {
                               background: s.color,
                               borderColor: s.color,
-                              color: "#0f1115",
+                              color: "#fff",
                             }
-                          : { borderColor: "#272b34", color: "#868b99" }
+                          : { borderColor: "#e4d4cf", color: "#8a7a72" }
                       }
                     >
                       {s.code} · {s.label}
@@ -728,7 +894,7 @@ const RoomOccupancyBoard: React.FC = () => {
               <div className="flex-1" />
               <button
                 onClick={closeModal}
-                className="rounded-lg px-3 py-2 text-sm font-medium text-[#868b99]"
+                className="rounded-lg px-3 py-2 text-sm font-medium text-[#8a7a72]"
               >
                 Cancel
               </button>
@@ -751,4 +917,4 @@ const RoomOccupancyBoard: React.FC = () => {
   );
 };
 
-export default RoomOccupancyBoard;
+export default OccupancyBoardPro;
