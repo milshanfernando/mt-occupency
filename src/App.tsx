@@ -127,75 +127,38 @@ const buildDefaultRooms = (): Room[] =>
     })),
   );
 
-// seed a few rooms so the board isn't empty on first load
-const seedRooms = (
-  rooms: Room[],
-  todayISO: string,
-  plusDays: (n: number) => string,
-): Room[] => {
-  const map: Record<string, Partial<Room>> = {
-    "vogue-m2-1": {
-      name: "Kader Kone",
-      start: todayISO,
-      end: plusDays(7),
-      source: "ABB",
-    },
-    "vogue-m2-2": {
-      name: "Donald Ward",
-      start: plusDays(-5),
-      end: plusDays(5),
-      source: "B",
-    },
-    "vogue-m2-3": {
-      name: "Aya Samir",
-      start: plusDays(-3),
-      end: todayISO,
-      source: "B",
-    },
-    "vogue-m2-4": {
-      name: "Loveriya",
-      start: plusDays(-5),
-      end: plusDays(5),
-      source: "B",
-    },
-    "vogue-m2-5": {
-      name: "Rajae Lotfi",
-      start: plusDays(-2),
-      end: plusDays(2),
-      source: "B",
-    },
-    "vogue-m2-6": {
-      name: "Johnquil Peralta",
-      start: plusDays(-2),
-      end: plusDays(2),
-      source: "B",
-    },
-    "vogue-m2-7": {
-      name: "Abu Yousuf",
-      start: todayISO,
-      end: todayISO,
-      source: "D",
-    },
-    "vogue-m2-9": {
-      name: "Arun Fournas",
-      start: plusDays(-1),
-      end: plusDays(1),
-      source: "B",
-    },
-    "vogue-m2-10": {
-      name: "Muhammed Arsalan",
-      start: todayISO,
-      end: plusDays(7),
-      source: "B",
-    },
-    "vogue-m2-11": {
-      name: "Natnael Fitsum",
-      start: plusDays(-3),
-      end: plusDays(3),
-      source: "D",
-    },
-  };
-  return rooms.map((r) => (map[r.id] ? { ...r, ...map[r.id] } : r));
+// ---------- persistence (browser localStorage) ----------
+const STORAGE_KEY = "occupancy-board-rooms-v1";
+
+const loadRooms = (): Room[] => {
+  if (typeof window === "undefined") return buildDefaultRooms();
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return buildDefaultRooms();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return buildDefaultRooms();
+    // merge saved data onto the current room map, so adding/removing
+    // rooms in `flats` above never breaks a previously saved board
+    const saved: Record<string, Room> = {};
+    parsed.forEach((r: Room) => {
+      if (r && typeof r.id === "string") saved[r.id] = r;
+    });
+    return buildDefaultRooms().map((r) =>
+      saved[r.id] ? { ...r, ...saved[r.id] } : r,
+    );
+  } catch (err) {
+    console.error("Failed to load saved occupancy data:", err);
+    return buildDefaultRooms();
+  }
+};
+
+const persistRooms = (rooms: Room[]) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms));
+  } catch (err) {
+    console.error("Failed to save occupancy data:", err);
+  }
 };
 
 // ---------- status theming ----------
@@ -258,11 +221,6 @@ const displayDate = (iso: string) => {
 };
 const today = new Date();
 const todayISO = toISO(today);
-const plusDays = (n: number): string => {
-  const d = new Date(today);
-  d.setDate(d.getDate() + n);
-  return toISO(d);
-};
 
 // finds the column count that lets every card fit on screen with no
 // scrolling, keeping cards as large and as close to square as possible
@@ -290,9 +248,7 @@ const bestColumnCount = (
 };
 
 const OccupancyBoardPro: React.FC = () => {
-  const [rooms, setRooms] = useState<Room[]>(() =>
-    seedRooms(buildDefaultRooms(), todayISO, plusDays),
-  );
+  const [rooms, setRooms] = useState<Room[]>(() => loadRooms());
   const [flat, setFlat] = useState<string>("vogue-m2");
   const [modal, setModal] = useState<Room | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -300,6 +256,11 @@ const OccupancyBoardPro: React.FC = () => {
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dragRef = useRef<DragState | null>(null);
   const gridWrapRef = useRef<HTMLDivElement>(null);
+
+  // save to localStorage every time the room data changes
+  useEffect(() => {
+    persistRooms(rooms);
+  }, [rooms]);
 
   useEffect(() => {
     if (document.getElementById("occ-board-fonts")) return;
