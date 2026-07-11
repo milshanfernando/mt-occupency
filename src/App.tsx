@@ -8,6 +8,8 @@ import {
   User,
   ChevronDown,
   Tag,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 // ---------- flats & rooms ----------
@@ -247,15 +249,25 @@ const bestColumnCount = (
   return best;
 };
 
+// how far (px) a touch must travel horizontally, and how "horizontal"
+// it must be relative to vertical movement, to count as a swipe
+const SWIPE_MIN_DISTANCE = 45;
+const SWIPE_MAX_OFF_AXIS_RATIO = 0.6;
+
 const OccupancyBoardPro: React.FC = () => {
   const [rooms, setRooms] = useState<Room[]>(() => loadRooms());
   const [flat, setFlat] = useState<string>("vogue-m2");
   const [modal, setModal] = useState<Room | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [cols, setCols] = useState(3);
+  const [swipeHint, setSwipeHint] = useState<"left" | "right" | null>(null);
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const dragRef = useRef<DragState | null>(null);
   const gridWrapRef = useRef<HTMLDivElement>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const swipeHintTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // save to localStorage every time the room data changes
   useEffect(() => {
@@ -274,6 +286,7 @@ const OccupancyBoardPro: React.FC = () => {
 
   const currentFlat = flats.find((f) => f.key === flat);
   const currentRooms = rooms.filter((r) => r.id.startsWith(flat + "-"));
+  const currentFlatIndex = flats.findIndex((f) => f.key === flat);
 
   // recompute grid columns whenever the container resizes or room count changes
   useLayoutEffect(() => {
@@ -288,6 +301,50 @@ const OccupancyBoardPro: React.FC = () => {
     ro.observe(el);
     return () => ro.disconnect();
   }, [currentRooms.length]);
+
+  // ---------- flat switching (dropdown + swipe share this) ----------
+  const goToFlat = (direction: 1 | -1) => {
+    const nextIndex =
+      (currentFlatIndex + direction + flats.length) % flats.length;
+    setFlat(flats[nextIndex].key);
+    setSwipeHint(direction === 1 ? "left" : "right");
+    if (swipeHintTimeoutRef.current) clearTimeout(swipeHintTimeoutRef.current);
+    swipeHintTimeoutRef.current = setTimeout(() => setSwipeHint(null), 260);
+  };
+
+  // ---------- swipe-to-switch-flat (touch only, ignores drag-and-drop) ----------
+  const onGridTouchStart = (e: React.TouchEvent) => {
+    if (dragRef.current) return; // a room card drag is in progress
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+
+  const onGridTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start || dragRef.current) return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_MIN_DISTANCE) return;
+    if (Math.abs(dy) > Math.abs(dx) * SWIPE_MAX_OFF_AXIS_RATIO) return;
+    // swipe left (finger moves right-to-left) -> next flat
+    // swipe right (finger moves left-to-right) -> previous flat
+    goToFlat(dx < 0 ? 1 : -1);
+  };
+
+  const onGridTouchCancel = () => {
+    touchStartRef.current = null;
+  };
+
+  useEffect(() => {
+    return () => {
+      if (swipeHintTimeoutRef.current)
+        clearTimeout(swipeHintTimeoutRef.current);
+    };
+  }, []);
 
   // ---------- modal actions ----------
   const openModal = (room: Room) => setModal({ ...room });
@@ -390,6 +447,7 @@ const OccupancyBoardPro: React.FC = () => {
   const onHandlePointerDown = (e: React.PointerEvent, room: Room) => {
     e.preventDefault();
     e.stopPropagation();
+    touchStartRef.current = null; // a card drag takes priority over a swipe
     const cardEl = cardRefs.current[room.id];
     if (!cardEl) return;
     const rect = cardEl.getBoundingClientRect();
@@ -483,7 +541,20 @@ const OccupancyBoardPro: React.FC = () => {
           </span>
         </div>
 
-        <div className="mt-1.5 flex items-center gap-2">
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <button
+            onClick={() => goToFlat(-1)}
+            aria-label="Previous property"
+            className="shrink-0 flex items-center justify-center rounded-lg bg-white border"
+            style={{
+              borderColor: "#e4d4cf",
+              color: "#b8863a",
+              width: 28,
+              height: 28,
+            }}
+          >
+            <ChevronLeft size={14} />
+          </button>
           <div className="relative flex-1 min-w-0">
             <select
               value={flat}
@@ -509,36 +580,81 @@ const OccupancyBoardPro: React.FC = () => {
               style={{ color: "#b8863a" }}
             />
           </div>
+          <button
+            onClick={() => goToFlat(1)}
+            aria-label="Next property"
+            className="shrink-0 flex items-center justify-center rounded-lg bg-white border"
+            style={{
+              borderColor: "#e4d4cf",
+              color: "#b8863a",
+              width: 28,
+              height: 28,
+            }}
+          >
+            <ChevronRight size={14} />
+          </button>
         </div>
 
-        <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1">
-          {statusLegend.map(([key, label]) => (
-            <span
-              key={key}
-              className="flex items-center gap-1"
-              style={{ fontSize: "8.5px", color: "#8a7a72" }}
-            >
+        <div className="mt-1.5 flex items-center justify-between">
+          <div className="flex flex-wrap gap-x-2 gap-y-1">
+            {statusLegend.map(([key, label]) => (
               <span
-                className="inline-block rounded-sm"
+                key={key}
+                className="flex items-center gap-1"
+                style={{ fontSize: "8.5px", color: "#8a7a72" }}
+              >
+                <span
+                  className="inline-block rounded-sm"
+                  style={{
+                    width: 6,
+                    height: 6,
+                    background: STATUS_THEME[key].badge,
+                  }}
+                />
+                {label}
+              </span>
+            ))}
+          </div>
+          <span
+            className="flex items-center gap-1 shrink-0"
+            style={{ fontSize: "8.5px", color: "#c9b493" }}
+          >
+            {flats.map((f, i) => (
+              <span
+                key={f.key}
+                className="inline-block rounded-full"
                 style={{
-                  width: 6,
-                  height: 6,
-                  background: STATUS_THEME[key].badge,
+                  width: i === currentFlatIndex ? 10 : 4,
+                  height: 4,
+                  background: i === currentFlatIndex ? "#b8863a" : "#e4d4cf",
+                  transition: "width 150ms ease",
                 }}
               />
-              {label}
-            </span>
-          ))}
+            ))}
+          </span>
         </div>
       </div>
 
       {/* room grid — fills remaining space; columns computed so nothing scrolls */}
-      <div ref={gridWrapRef} className="flex-1 min-h-0 px-2.5 py-2">
+      {/* swipe left/right anywhere in this area to switch property (mobile) */}
+      <div
+        ref={gridWrapRef}
+        className="relative flex-1 min-h-0 px-2.5 py-2"
+        onTouchStart={onGridTouchStart}
+        onTouchEnd={onGridTouchEnd}
+        onTouchCancel={onGridTouchCancel}
+        style={{ touchAction: "pan-y" }}
+      >
         <div
           className="h-full grid gap-1.5"
           style={{
             gridTemplateColumns: `repeat(${cols}, 1fr)`,
             gridTemplateRows: `repeat(${rows}, 1fr)`,
+            opacity: swipeHint ? 0.55 : 1,
+            transform: swipeHint
+              ? `translateX(${swipeHint === "left" ? "-6px" : "6px"})`
+              : "translateX(0)",
+            transition: "opacity 160ms ease, transform 160ms ease",
           }}
         >
           {currentRooms.map((room) => {
